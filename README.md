@@ -1,36 +1,61 @@
-# Bilibili 直播录制工具
+# Bilibili 直播录制助手 (Bilibili Live Recorder)
 
-## 简介
-这是一个简单的 Python 工具，用于监控指定的 Bilibili UP 主直播状态。一旦 UP 主开播，自动调用 ffmpeg 进行录制。
+## 📌 简介
+这是一个功能强大的 Bilibili 直播自动录制工具，能够全天候监控指定 UP 主的直播状态。
+一旦开播，工具会自动启动录制，同时保存直播弹幕，并在直播结束后自动将分段视频合并为完整的 MP4 文件。
 
-## 功能
-- 根据 URL 或 UID 搜索 UP 主。
-- 自动监控直播间状态。
-- 使用 ffmpeg 录制直播流。
-- [x] 按时间分段保存录像（默认为 10 分钟）。
-- 自动重试机制。
+## ✨ 主要功能
+*   **全自动监控**：输入 UP 主主页链接或 UID 即可开始监控。
+*   **直播录制**：调用 FFmpeg 进行高质量录制，支持自定义分段时长。
+*   **弹幕保存**：自动连接直播间弹幕服务器，实时保存弹幕内容到本地 TXT 文件（支持断电保护，实时写入）。
+*   **自动合并**：直播结束后，自动将分出的 FLV 片段合并为 MP4，方便观看和存档。
+*   **扫码登录**：支持 Bilibili 扫码登录，使用登录态进行录制和获取弹幕，连接更稳定，画质更高。
+*   **断流重连**：网络波动或直播异常中断时，工具会自动尝试重连，确保录制完整。
 
-## 前置要求
-1. **Python 3.6+**: 必须安装 Python 环境。
-2. **FFmpeg**: 必须安装 FFmpeg 并将其添加到系统环境变量 PATH 中。  
-   *Windows 用户下载编译好的 ffmpeg.exe 放入 C:\Windows\System32 或手动添加 Path 即可。*
+## 🛠️ 前置要求
+1.  **Python 3.10+**: 请确保已安装 Python 环境。
+2.  **FFmpeg**: 必须安装 FFmpeg 并将其添加到系统环境变量 PATH 中。
+    *   Windows 用户请下载 FFmpeg 编译包，解压并将 `bin` 目录添加到系统环境变量，或者直接将 `ffmpeg.exe` 放入 `C:\Windows\System32`。
 
-## 安装依赖
-在项目根目录下运行：
-```bash
-pip install -r requirements.txt
-```
+## 📦 安装与配置
+1.  **克隆或下载本项目**
+2.  **安装依赖库**
+    在项目根目录下打开终端，运行：
+    ```bash
+    pip install -r requirements.txt
+    ```
+    > 注意：本项目依赖 `brotli` 库来解压弹幕数据，请确保安装成功。
 
-## 使用方法
-双击运行 `run.py` 或者在命令行中输入：
-```bash
-python run.py
-```
-然后按照提示输入 UP 主的主页链接（如 `https://space.bilibili.com/123456`）或 UID（如 `123456`）。
+## 🚀 使用方法
+1.  **启动程序**
+    在终端运行：
+    ```bash
+    python run.py
+    ```
+2.  **选择功能**
+    *   输入 `1` 进入 **监控录制模式**，输入 UP 主的 URL 或 UID 即可开始挂机。
+    *   输入 `2` 进入 **视频合并模式**，手动合并已录制的分段文件。
+    *   输入 `3` 进行 **扫码登录**，建议首次使用前先登录，以提高录制稳定性。
+    *   输入 `4` 进入 **系统设置**，调整录制参数。
 
-程序会自动监控，名为 `Recordings` 的文件夹会自动生成在项目目录下，录好的视频会保存在其中。
+3.  **结果查看**
+    *   录制的视频和弹幕文件默认保存在 `Recordings/` 目录下，按 UP 主和时间分类。
+    *   弹幕文件为 `.txt` 格式，包含时间戳、发送者和内容。
 
-## 配置
-你可以修改 `bilibili_live_recorder/config.py` 文件来调整配置：
-- `SEGMENT_TIME`: 分段时长（秒），默认 600 秒（10分钟）。
-- `CHECK_INTERVAL`: 检查间隔（秒）。
+## ⚙️ 高级配置
+你可以直接修改 `bilibili_live_recorder/config.py` 文件，或者使用菜单中的“系统设置”来调整：
+*   `CHECK_INTERVAL`: 监控检查间隔（秒）。
+*   `SEGMENT_TIME`: 分段录制时长（秒），建议 3600（1小时）。
+*   `AUTO_MERGE_AFTER_STREAM`: 是否在直播结束后自动合并视频（True/False）。
+*   `DELETE_SEGMENTS_AFTER_MERGE`: 合并后是否删除原始分段文件（True/False）。
+*   `RECORD_DANMAKU`: 是否录制弹幕（True/False）。
+
+## 📝 常见问题
+*   **弹幕文件为空？**
+    *   请确保已安装 `brotli` 库。
+    *   尝试在菜单中选择“扫码登录”更新 Cookie。
+*   **FFmpeg 报错？**
+    *   请检查 FFmpeg 是否正确安装并配置了环境变量。
+
+## 📄 许可证
+MIT License

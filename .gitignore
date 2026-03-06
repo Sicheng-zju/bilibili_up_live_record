@@ -2,27 +2,35 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Virtual Environment
+*.log
+*.log.*
 .venv/
-venv/
 env/
+venv/
 ENV/
 
 # VS Code
 .vscode/
-*.code-workspace
 
-# Project specific
-Recordings/
+# Project Directories
 logs/
+DebugLogs/
+Recordings/
+TestRecordings/
+temp/
+
+# User Data
+cookies.pkl
+config_local.py
+user_settings.json
+
+# Media Files
 *.flv
 *.mp4
-*.log
+*.ts
 
-# System files
+# System Files
 .DS_Store
 Thumbs.db
-
-# Sensitive files
-cookies.pkl
+ehthumbs.db
+[Dd]esktop.ini
