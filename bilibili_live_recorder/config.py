@@ -9,6 +9,15 @@ CHECK_INTERVAL = 30 # 每30秒检查一次
 # 直播分段时长（秒），例如 3600 秒（1小时）分段一次
 SEGMENT_TIME = 900 
 
+# 直播结束后是否自动合并分段视频
+AUTO_MERGE_AFTER_STREAM = True
+
+# 合并完成后是否自动删除分段视频
+DELETE_SEGMENTS_AFTER_MERGE = True
+
+# 是否录制弹幕
+RECORD_DANMAKU = True
+
 import random
 import uuid
 

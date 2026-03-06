@@ -142,6 +142,19 @@ class BilibiliAPI:
             return None
 
     @classmethod
+    def get_danmu_info(cls, room_id):
+        """获取弹幕服务器信息"""
+        url = f"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={room_id}&type=0"
+        try:
+            response = cls.session.get(url, timeout=10).json()
+            if response['code'] == 0:
+                return response['data']
+            return None
+        except Exception as e:
+            log_error(f"获取弹幕信息失败: {e}", console=False)
+            return None
+
+    @classmethod
     def get_live_url(cls, room_id):
         try:
             url = "https://api.live.bilibili.com/xlive/web-room/v1/playUrl/playUrl"
