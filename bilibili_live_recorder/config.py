@@ -18,6 +18,23 @@ DELETE_SEGMENTS_AFTER_MERGE = True
 # 是否录制弹幕
 RECORD_DANMAKU = True
 
+# ========== 字幕生成设置 (OpenAI API / Local Whisper) ==========
+# 是否直播结束后自动生成字幕
+GENERATE_SUBTITLES = True
+
+# 字幕生成方式: "local_whisper" (本地模型, 推荐, 需安装 faster-whisper) 或 "openai_api" (需API Key)
+SUBTITLE_METHOD = "local_whisper"
+
+# OpenAI API 设置 (如果是使用 ChatGPT 或类似兼容接口)
+OPENAI_API_KEY = "sk-YOUR_API_KEY_HERE"
+OPENAI_API_BASE_URL = "https://api.openai.com/v1" # 可以改为国内中转API地址
+OPENAI_MODEL = "whisper-1"
+
+# 本地 Whisper 模型大小: "tiny", "base", "small", "medium", "large-v3"
+# 注意: medium/large 需要较好的显卡 (GPU)
+LOCAL_WHISPER_MODEL = "large"
+# ==========================================================
+
 import random
 import uuid
 
