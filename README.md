@@ -18,6 +18,28 @@
     *   Windows 用户请下载 FFmpeg 编译包，解压并将 `bin` 目录添加到系统环境变量，或者直接将 `ffmpeg.exe` 放入 `C:\Windows\System32`。
 
 ## 📦 安装与配置
+使用 `pip` 安装所需的依赖库，包括 core libraries 和 AI Whisper 模型支持库：
+
+```bash
+pip install -r requirements.txt
+```
+
+### 🧠(重要) AI 字幕生成环境配置 (GPU 加速)
+如果你希望使用本地显卡加速生成字幕，请务必安装对应 CUDA 版本的 PyTorch。
+
+**步骤 1**: 确保电脑已安装 NVIDIA 显卡驱动。
+**步骤 2**:根据 CUDA 版本选择命令安装 PyTorch (推荐 CUDA 12.x):
+
+```bash
+# 推荐: CUDA 12.4
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+或者前往 [PyTorch 官网](https://pytorch.org/get-started/locally/)查找适合自己的安装命令。
+
+**注意**: 直接运行 `pip install torch` 可能只会安装 CPU 版本，无法调用显卡，生成字幕速度会极慢。
+
+### 🚀 运行程序
+双击 `run.py` 或在终端运行：
 1.  **克隆或下载本项目**
 2.  **安装依赖库**
     在项目根目录下打开终端，运行：

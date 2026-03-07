@@ -58,19 +58,23 @@ class Transcriber:
             
             if SUBTITLE_METHOD == "openai_api":
                 srt_content = self._transcribe_api(audio_path)
+                if srt_content:
+                    with open(srt_path, 'w', encoding='utf-8') as f:
+                        f.write(srt_content)
+                    log_info(f"字幕生成成功: {srt_path}", color=True)
+                    return True
+                else:
+                    log_error("未能获取字幕内容。")
+                    return False
             elif SUBTITLE_METHOD == "local_whisper":
-                srt_content = self._transcribe_local(audio_path)
+                # 本地模型改为流式写入，防止长时间运行后无结果
+                if self._transcribe_local(audio_path, srt_path):
+                    log_info(f"字幕生成成功: {srt_path}", color=True)
+                    return True
+                else:
+                    return False
             else:
                 log_error(f"未知的字幕生成方式: {SUBTITLE_METHOD}")
-                return False
-                
-            if srt_content:
-                with open(srt_path, 'w', encoding='utf-8') as f:
-                    f.write(srt_content)
-                log_info(f"字幕生成成功: {srt_path}", color=True)
-                return True
-            else:
-                log_error("未能获取字幕内容。")
                 return False
 
         except Exception as e:
@@ -115,12 +119,12 @@ class Transcriber:
             log_error(f"OpenAI API 调用失败: {e}")
             return None
 
-    def _transcribe_local(self, audio_path):
+    def _transcribe_local(self, audio_path, srt_path):
         try:
             from faster_whisper import WhisperModel
         except ImportError:
             log_error("未安装 faster-whisper 库。请运行 `pip install faster-whisper`")
-            return None
+            return False
             
         try:
             # 禁用 HuggingFace Hub 的 Symlink 警告
@@ -129,8 +133,6 @@ class Transcriber:
             log_info(f"加载本地模型: {LOCAL_WHISPER_MODEL} ...", console=False)
             
             # detect device: cuda or cpu
-            # 如果安装了 torch，我们可以通过 torch 检查是否存在 CUDA
-            # 如果没安装 torch，faster-whisper (ctranslate2) 依赖本地的 CUDA/cuDNN 库
             device = "cpu"
             try:
                 import torch
@@ -156,23 +158,32 @@ class Transcriber:
                 else:
                     raise ve
 
+            log_info("开始转写...", console=True)
             segments, info = model.transcribe(audio_path, beam_size=5)
             
             log_info(f"检测到语言: {info.language} (置信度: {info.language_probability})", console=False)
             
-            # Convert segments to SRT format
-            srt_str = ""
-            for i, segment in enumerate(segments, start=1):
-                start = self._format_timestamp(segment.start)
-                end = self._format_timestamp(segment.end)
-                text = segment.text.strip()
-                srt_str += f"{i}\n{start} --> {end}\n{text}\n\n"
-                
-            return srt_str
+            # 使用流式写入，避免内存积压和中途失败丢失所有内容
+            with open(srt_path, "w", encoding="utf-8") as f:
+                segment_count = 0
+                for i, segment in enumerate(segments, start=1):
+                    start = self._format_timestamp(segment.start)
+                    end = self._format_timestamp(segment.end)
+                    text = segment.text.strip()
+                    
+                    f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
+                    f.flush() # 确保写入硬盘
+                    
+                    segment_count = i
+                    if segment_count % 10 == 0:
+                        print(f"  已生成 {segment_count} 条字幕...", end='\r')
+            
+            print(f"  已生成 {segment_count} 条字幕 (完成)")
+            return True
             
         except Exception as e:
             log_error(f"本地模型运行失败: {e}")
-            return None
+            return False
 
     def _format_timestamp(self, seconds):
         """Convert seconds to SRT timestamp format (HH:MM:SS,mmm)"""
