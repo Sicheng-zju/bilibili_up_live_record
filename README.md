@@ -11,6 +11,7 @@
 *   **自动合并**：直播结束后，自动将分出的 FLV 片段合并为 MP4，方便观看和存档。
 *   **扫码登录**：支持 Bilibili 扫码登录，使用登录态进行录制和获取弹幕，连接更稳定，画质更高。
 *   **断流重连**：网络波动或直播异常中断时，工具会自动尝试重连，确保录制完整。
+*   **生成字幕**：使用openai api或本地faster-wispher生成录制视频的字幕。
 
 ## 🛠️ 前置要求
 1.  **Python 3.10+**: 请确保已安装 Python 环境。
@@ -32,6 +33,7 @@ pip install -r requirements.txt
 
 ```bash
 # 推荐: CUDA 12.4
+# 如果已经安装了cpu版本的torch得先卸载：pip uninstall torch torchvision torchaudio
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 或者前往 [PyTorch 官网](https://pytorch.org/get-started/locally/)查找适合自己的安装命令。
@@ -57,8 +59,9 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 2.  **选择功能**
     *   输入 `1` 进入 **监控录制模式**，输入 UP 主的 URL 或 UID 即可开始挂机。
     *   输入 `2` 进入 **视频合并模式**，手动合并已录制的分段文件。
-    *   输入 `3` 进行 **扫码登录**，建议首次使用前先登录，以提高录制稳定性。
-    *   输入 `4` 进入 **系统设置**，调整录制参数。
+    *   输入 `3` 进入 **字幕生成模式**，手动为已合并后的录制视频生成字幕。
+    *   输入 `4` 进行 **扫码登录**，建议首次使用前先登录，以提高录制稳定性。
+    *   输入 `5` 进入 **系统设置**，调整系统设置参数。
 
 3.  **结果查看**
     *   录制的视频和弹幕文件默认保存在 `Recordings/` 目录下，按 UP 主和时间分类。
@@ -66,11 +69,14 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 ## ⚙️ 高级配置
 你可以直接修改 `bilibili_live_recorder/config.py` 文件，或者使用菜单中的“系统设置”来调整：
-*   `CHECK_INTERVAL`: 监控检查间隔（秒）。
-*   `SEGMENT_TIME`: 分段录制时长（秒），建议 3600（1小时）。
+*   `CHECK_INTERVAL`: 监控检查间隔（秒），即挂机时每隔多少秒检查一次up主有没有开播。
+*   `SEGMENT_TIME`: 分段录制时长（秒），建议 900 秒。
 *   `AUTO_MERGE_AFTER_STREAM`: 是否在直播结束后自动合并视频（True/False）。
 *   `DELETE_SEGMENTS_AFTER_MERGE`: 合并后是否删除原始分段文件（True/False）。
 *   `RECORD_DANMAKU`: 是否录制弹幕（True/False）。
+*   `GENERATE_SUBTITLES`: 是否直播结束后自动生成字幕（True/False）。
+*   `SUBTITLE_METHOD`: 字幕生成方式（local_whisper/openai_api）。
+*   `LOCAL_WHISPER_MODEL`: 本地 Whisper 模型大小（"tiny", "base", "small", "medium", "large-v3"）。
 
 ## 📝 常见问题
 *   **弹幕文件为空？**

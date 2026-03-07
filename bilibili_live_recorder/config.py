@@ -20,7 +20,7 @@ RECORD_DANMAKU = True
 
 # ========== 字幕生成设置 (OpenAI API / Local Whisper) ==========
 # 是否直播结束后自动生成字幕
-GENERATE_SUBTITLES = True
+GENERATE_SUBTITLES = False
 
 # 字幕生成方式: "local_whisper" (本地模型, 推荐, 需安装 faster-whisper) 或 "openai_api" (需API Key)
 SUBTITLE_METHOD = "local_whisper"
