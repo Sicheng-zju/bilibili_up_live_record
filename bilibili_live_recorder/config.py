@@ -33,6 +33,27 @@ OPENAI_MODEL = "whisper-1"
 # 本地 Whisper 模型大小: "tiny", "base", "small", "medium", "large-v3"
 # 注意: medium/large 需要较好的显卡 (GPU)
 LOCAL_WHISPER_MODEL = "large"
+
+# ========== 自动摘要设置 (LLM) ==========
+# 是否合并/字幕生成后自动总结直播内容
+GENERATE_SUMMARY = True
+
+# 摘要生成使用的 API 设置 (兼容 OpenAI 格式，可填 ChatGPT, DeepSeek, Ollama, LM Studio 等)
+# 若使用本地 LLM (如 Ollama)，Base URL 通常为 "http://localhost:11434/v1"
+SUMMARY_API_KEY = "sk-YOUR_API_KEY_HERE"
+SUMMARY_API_BASE_URL = "https://api.deepseek.com" # 这是deepseek的 Base URL
+SUMMARY_MODEL = "deepseek-chat" # 或本地模型名，如 "llama3"
+
+# 摘要提示词 (Prompt)，可自定义
+SUMMARY_PROMPT = """
+你是一个专业的直播内容总结助手。请根据提供的直播字幕内容(SRT)和部分弹幕内容(如果有)，生成一份详细的直播内容总结。
+重点关注：直播的主要话题、有趣的互动、关键事件以及观众的反应。
+请按以下格式输出：
+1. 直播主题概览
+2. 时间轴/关键节点 (如能提取)
+3. 详细内容回顾
+4. 观众互动亮点
+"""
 # ==========================================================
 
 import random

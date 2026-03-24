@@ -15,5 +15,13 @@ except ImportError as e:
     sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    import multiprocessing
+    multiprocessing.freeze_support()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print("\n程序发生严重错误，已停止运行。")
+        input("按回车键退出...")
  

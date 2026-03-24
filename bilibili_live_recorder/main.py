@@ -5,6 +5,7 @@ import time
 import os
 import signal
 import threading
+import multiprocessing
 from colorama import init, Fore, Style
 from .bilibili_api import BilibiliAPI
 from .recorder import Recorder
@@ -13,7 +14,9 @@ from .merger import Merger
 from .logger import log_info, log_error, log_warning
 from .danmaku import DanmakuRecorder
 from .transcriber import Transcriber
+from .summarizer import Summarizer
 from .config import GENERATE_SUBTITLES, SUBTITLE_METHOD, OPENAI_API_KEY, OPENAI_API_BASE_URL, OPENAI_MODEL, LOCAL_WHISPER_MODEL
+from .config import GENERATE_SUMMARY, SUMMARY_API_KEY, SUMMARY_API_BASE_URL, SUMMARY_MODEL
 
 # 初始化 colorama
 init()
@@ -54,6 +57,14 @@ def print_up_info(info):
     print("="*30 + Style.RESET_ALL + "\n")
     log_info(f"目标确认: {info['name']} (RoomID: {info['room_id']})", console=False)
 
+def _run_transcription_isolated(video_path):
+    """在独立进程中运行转写任务"""
+    try:
+        transcriber = Transcriber()
+        transcriber.generate_subtitle(video_path)
+    except Exception as e:
+        log_error(f"转写进程内部异常: {e}", console=True)
+
 def _merge_and_clean(merger, dir_path, base_name, file_list):
     """
     具体的合并与清理逻辑
@@ -62,13 +73,14 @@ def _merge_and_clean(merger, dir_path, base_name, file_list):
     
     if os.path.exists(output_file):
          print(Fore.YELLOW + f"  跳过: {base_name} (已存在合并文件)" + Style.RESET_ALL)
-         # 即使已存在，如果是自动合并任务，也可能需要补生成字幕
-         # 但为了避免重复处理，这里我们只对新生成的文件或者明确需要处理的进行字幕生成
-         # 如果用户需要手动生成字幕，可能需要单独的菜单项，这里暂且只在合并成功后生成
          return False
          
     print(f"  正在处理: {base_name} ...")
-    success = merger.merge_segments(output_file, file_list)
+    try:
+        success = merger.merge_segments(output_file, file_list)
+    except Exception as e:
+        log_error(f"合并失败: {e}", console=True)
+        return False
     
     if success:
         if DELETE_SEGMENTS_AFTER_MERGE:
@@ -81,48 +93,84 @@ def _merge_and_clean(merger, dir_path, base_name, file_list):
                     
         # 尝试生成字幕
         if GENERATE_SUBTITLES:
+            print(Fore.CYAN + f"  [字幕] 准备生成字幕..." + Style.RESET_ALL)
             try:
-                transcriber = Transcriber()
-                transcriber.generate_subtitle(output_file)
+                # 使用独立子进程运行转写，防止 whisper 模型释放时的 Segmentation Fault 导致整个脚本崩溃
+                # 注意：父进程 (try_auto_merge 启动的那个) 必须 daemon=False 才能在此处再开子进程
+                p_sub = multiprocessing.Process(target=_run_transcription_isolated, args=(output_file,))
+                p_sub.start()
+                p_sub.join()  # 等待子进程结束
+                
+                if p_sub.exitcode != 0:
+                    log_warning(f"  字幕生成进程非正常退出 (ExitCode: {p_sub.exitcode})，但已生成的字幕可能仍然可用。", console=True)
             except Exception as e:
-                log_error(f"字幕生成异常: {e}", console=True)
+                log_error(f"启动字幕生成进程失败: {e}", console=True)
+        
+        # 尝试生成总结
+        if GENERATE_SUMMARY:
+            print(Fore.CYAN + f"  [总结] 准备生成总结..." + Style.RESET_ALL)
+            try:
+                summarizer = Summarizer()
+                summarizer.summarize(output_file)
+            except Exception as e:
+                log_error(f"直播总结生成异常: {e}", console=True)
+        else:
+            print(Fore.YELLOW + "  [总结] 自动总结未开启 (GENERATE_SUMMARY=False)" + Style.RESET_ALL)
                 
     return success
 
 def _auto_merge_task_impl(dir_path):
     log_info(f"正在后台执行自动合并任务: {dir_path}", console=True)
-    merger = Merger()
-    
-    # 获取 segments 需要检查 groups 是否为空
-    # 但由于我们在后台线程，可能需要更健壮的错误处理
     try:
-        groups = merger.get_segments(dir_path)
+        merger = Merger()
+        
+        # 获取 segments 需要检查 groups 是否为空
+        try:
+            groups = merger.get_segments(dir_path)
+        except Exception as e:
+            log_error(f"后台合并扫描失败: {e}", console=True)
+            return
+
+        if not groups:
+            log_info("  自动合并: 未发现需合并的分段。", console=True)
+            return
+
+        count = 0
+        for base_name, file_list in groups.items():
+            try:
+                if _merge_and_clean(merger, dir_path, base_name, file_list):
+                    count += 1
+            except Exception as e:
+                log_error(f"单个文件处理异常: {e}", console=True)
+                
+        if count > 0:
+            log_info(f"后台自动合并完成，共处理 {count} 组。", console=True)
     except Exception as e:
-        log_error(f"后台合并扫描失败: {e}", console=True)
-        return
-
-    if not groups:
-        log_info("  自动合并: 未发现需合并的分段。", console=True)
-        return
-
-    count = 0
-    for base_name, file_list in groups.items():
-        # 这里调用 _merge_and_clean，注意它会打印日志
-        if _merge_and_clean(merger, dir_path, base_name, file_list):
-            count += 1
-            
-    if count > 0:
-        log_info(f"后台自动合并完成，共处理 {count} 组。", console=True)
+        log_error(f"后台合并任务严重错误: {e}", console=True)
 
 def try_auto_merge(dir_path):
     """
-    尝试自动合并指定目录下的分段 (在新线程中执行)
+    尝试自动合并指定目录下的分段 (在新进程中执行，以隔离潜在的 ffmpeg/cuda 崩溃)
     """
     if not dir_path or not os.path.exists(dir_path):
         return
 
-    # 启动后台线程
-    threading.Thread(target=_auto_merge_task_impl, args=(dir_path,), daemon=True).start()
+    # 启动后台进程
+    # 使用 multiprocessing 而不是 threading，可以避免 CUDA 在多线程下的 context 问题，
+    # 并且如果转写/合并过程崩溃，不会导致主监控程序退出。
+    try:
+        if sys.platform == 'win32':
+             # Windows 下需确保 __name__ == '__main__' 保护，
+             # 但 try_auto_merge 是被调用的，所以只要调用它的 run.py 有保护即可。
+             # 这里只是额外加个 try-except
+             pass
+
+        p = multiprocessing.Process(target=_auto_merge_task_impl, args=(dir_path,))
+        p.daemon = False # 自动合并进程必须为非守护进程，因为它会启动字幕生成子进程
+        p.start()
+        log_info(f"已启动独立进程 (PID: {p.pid}) 处理合并与转写任务...", console=True)
+    except Exception as e:
+        log_error(f"启动自动合并进程失败: {e}", console=True)
 
 def update_config_file(key, new_val):
     return _update_config_file_impl(key, new_val)
@@ -179,6 +227,7 @@ def show_settings():
         print(f"4. 合并后删除 [DELETE_AFTER_MERGE]: {Fore.CYAN}{'开启' if DELETE_SEGMENTS_AFTER_MERGE else '关闭'}{Style.RESET_ALL}")
         print(f"5. 录制弹幕 [RECORD_DANMAKU]: {Fore.CYAN}{'开启' if RECORD_DANMAKU else '关闭'}{Style.RESET_ALL}")
         print(f"6. 自动生成字幕 [GENERATE_SUBTITLES]: {Fore.CYAN}{'开启' if GENERATE_SUBTITLES else '关闭'}{Style.RESET_ALL}")
+        print(f"12. 自动生成总结 [GENERATE_SUMMARY]: {Fore.CYAN}{'开启' if GENERATE_SUMMARY else '关闭'}{Style.RESET_ALL}")
         
         method_str = "OpenAI API" if SUBTITLE_METHOD == "openai_api" else "本地 Faster-Whisper"
         print(f"7. 字幕生成方式 [SUBTITLE_METHOD]: {Fore.CYAN}{method_str}{Style.RESET_ALL}")
@@ -193,10 +242,14 @@ def show_settings():
         print(f"9. OpenAI Base URL: {Fore.CYAN}{OPENAI_API_BASE_URL}{Style.RESET_ALL}")
         print(f"10. OpenAI Model: {Fore.CYAN}{OPENAI_MODEL}{Style.RESET_ALL}")
         print(f"11. 本地 Whisper 模型: {Fore.CYAN}{LOCAL_WHISPER_MODEL}{Style.RESET_ALL}")
+        
+        print(f"13. 总结 API Key (若空则复用OpenAI Key): {Fore.CYAN}{'已设置' if SUMMARY_API_KEY else '未设置'}{Style.RESET_ALL}")
+        print(f"14. 总结 Base URL: {Fore.CYAN}{SUMMARY_API_BASE_URL}{Style.RESET_ALL}")
+        print(f"15. 总结模型 (LLM): {Fore.CYAN}{SUMMARY_MODEL}{Style.RESET_ALL}")
 
         print("b. 返回主菜单")
         
-        choice = input("\n请输入选项修改设置 (1-11/b): ").strip().lower()
+        choice = input("\n请输入选项修改设置 (1-15/b): ").strip().lower()
         
         if choice == 'b':
             break
@@ -286,6 +339,30 @@ def show_settings():
                   if update_config_file('LOCAL_WHISPER_MODEL', new_size):
                        print(Fore.GREEN + "本地模型设置已更新" + Style.RESET_ALL)
 
+        elif choice == '12':
+            user_val = input("开启自动生成总结? (y/n): ").lower()
+            new_val = True if user_val == 'y' else False
+            if update_config_file('GENERATE_SUMMARY', new_val):
+                 print(Fore.GREEN + f"配置已更新为: {new_val} (请重启生效)" + Style.RESET_ALL)
+
+        elif choice == '13':
+             new_key = input("请输入新的 Summary API Key: ").strip()
+             if new_key:
+                  if update_config_file('SUMMARY_API_KEY', new_key):
+                       print(Fore.GREEN + "Summary API Key 已更新" + Style.RESET_ALL)
+
+        elif choice == '14':
+             new_url = input(f"请输入新的 Summary Base URL: ").strip()
+             if new_url:
+                  if update_config_file('SUMMARY_API_BASE_URL', new_url):
+                       print(Fore.GREEN + "Summary Base URL 已更新" + Style.RESET_ALL)
+
+        elif choice == '15':
+             new_model = input(f"请输入新的 Summary Model (当前: {SUMMARY_MODEL}): ").strip()
+             if new_model:
+                  if update_config_file('SUMMARY_MODEL', new_model):
+                       print(Fore.GREEN + "Summary Model 已更新" + Style.RESET_ALL)
+
         else:
             print("无效选项。")
 
@@ -322,92 +399,102 @@ def start_monitor():
     # 2. 监控循环
     try:
         while True:
-            # === 如果正在录制，优先检查录制进程状态 ===
-            if recording:
-                last_save_dir = recorder.save_dir
-                if recorder.is_recording():
-                    # 录制正常进行中...
-                    # 可以在这里打印心跳，或者什么都不做
+            try:
+                # === 如果正在录制，优先检查录制进程状态 ===
+                if recording:
+                    last_save_dir = recorder.save_dir
+                    if recorder.is_recording():
+                        # 录制正常进行中...
+                        # 可以在这里打印心跳，或者什么都不做
+                        time.sleep(CHECK_INTERVAL)
+                        continue
+                    else:
+                        # 录制进程退出了
+                        print(Fore.YELLOW + f"\n[{time.strftime('%H:%M:%S')}] 录制进程已退出，正在尝试重新连接..." + Style.RESET_ALL)
+                        recording = False
+                        
+                        if danmaku_recorder:
+                            danmaku_recorder.stop()
+                            danmaku_recorder = None
+                            
+                        # 不要 sleep，立即走下面的逻辑尝试获取地址并重连
+
+                # === 未录制状态，或者刚掉线，检查 API ===
+                try:
+                    current_info = BilibiliAPI.get_user_info(uid)
+                except Exception as e:
+                    # 捕获所有网络异常
+                    log_error(f"API请求异常 (忽略): {e}", console=False)
+                    current_info = None
+
+                if not current_info:
+                    error_count += 1
+                    if error_count % 10 == 0:
+                        print(Fore.YELLOW + f"[{time.strftime('%H:%M:%S')}] 网络波动: 无法获取直播间状态 (已重试 {error_count} 次)..." + Style.RESET_ALL)
                     time.sleep(CHECK_INTERVAL)
                     continue
-                else:
-                    # 录制进程退出了
-                    print(Fore.YELLOW + f"\n[{time.strftime('%H:%M:%S')}] 录制进程已退出，正在尝试重新连接..." + Style.RESET_ALL)
-                    recording = False
-                    
-                    if danmaku_recorder:
-                        danmaku_recorder.stop()
-                        danmaku_recorder = None
+                
+                # API 成功，重置计数
+                error_count = 0 
+                is_live = current_info['is_live']
+                
+                if is_live:
+                    if not recording:
+                        log_info(f"检测到 {up_name} 开播 (或正在恢复录制)！标题: {current_info['title']}", color=Fore.GREEN)
                         
-                    # 不要 sleep，立即走下面的逻辑尝试获取地址并重连
-
-            # === 未录制状态，或者刚掉线，检查 API ===
-            try:
-                current_info = BilibiliAPI.get_user_info(uid)
-            except Exception as e:
-                # 捕获所有网络异常
-                log_error(f"API请求异常 (忽略): {e}", console=False)
-                current_info = None
-
-            if not current_info:
-                error_count += 1
-                if error_count % 10 == 0:
-                    print(Fore.YELLOW + f"[{time.strftime('%H:%M:%S')}] 网络波动: 无法获取直播间状态 (已重试 {error_count} 次)..." + Style.RESET_ALL)
-                time.sleep(CHECK_INTERVAL)
-                continue
-            
-            # API 成功，重置计数
-            error_count = 0 
-            is_live = current_info['is_live']
-            
-            if is_live:
-                if not recording:
-                    log_info(f"检测到 {up_name} 开播 (或正在恢复录制)！标题: {current_info['title']}", color=Fore.GREEN)
-                    
-                    stream_url = BilibiliAPI.get_live_url(room_id)
-                    if stream_url:
-                        log_info(f"获取流地址成功，启动录制...")
-                        success = recorder.start_recording(stream_url)
-                        if success:
-                            recording = True
-                            
-                            # 启动弹幕录制
-                            if RECORD_DANMAKU:
-                                try:
-                                    # 使用 recorder 的 save_dir 确保在同一个文件夹
-                                    danmaku_recorder = DanmakuRecorder(room_id, up_name, recorder.save_dir)
-                                    danmaku_recorder.start()
-                                except Exception as e:
-                                    log_error(f"启动弹幕录制失败: {e}", console=True)
+                        stream_url = BilibiliAPI.get_live_url(room_id)
+                        if stream_url:
+                            log_info(f"获取流地址成功，启动录制...")
+                            success = recorder.start_recording(stream_url)
+                            if success:
+                                recording = True
+                                
+                                # 启动弹幕录制
+                                if RECORD_DANMAKU:
+                                    try:
+                                        # 使用 recorder 的 save_dir 确保在同一个文件夹
+                                        danmaku_recorder = DanmakuRecorder(room_id, up_name, recorder.save_dir)
+                                        danmaku_recorder.start()
+                                    except Exception as e:
+                                        log_error(f"启动弹幕录制失败: {e}", console=True)
+                            else:
+                                log_error("录制启动失败，稍后重试。")
                         else:
-                            log_error("录制启动失败，稍后重试。")
-                    else:
-                        log_error("无法获取直播流地址。")
-            
-            elif not is_live:
-                 # Up主未开播
-                 # 如果刚才是处于录制状态，或者刚结束录制，尝试自动合并
-                 if last_save_dir:
-                     if danmaku_recorder:
-                        danmaku_recorder.stop()
-                        danmaku_recorder = None
+                            log_error("无法获取直播流地址。")
+                
+                elif not is_live:
+                    # Up主未开播
+                    # 如果刚才是处于录制状态，或者刚结束录制，尝试自动合并
+                    if last_save_dir:
+                        if danmaku_recorder:
+                            danmaku_recorder.stop()
+                            danmaku_recorder = None
+                            
+                        if AUTO_MERGE_AFTER_STREAM:
+                            # 避免在一次停播期间重复合并
+                            # 我们可以传递一个标记给 try_auto_merge 吗？不，它靠文件是否已合并来判断。
+                            # 但由于我们有 API 检查间隔，可能会频繁扫描目录。
+                            # 为了优化，可以将 try_auto_merge 放在第一次检测到 not is_live 时。
+                            # 也就是 last_save_dir 还是非 None 时。
+                            
+                            # 执行合并
+                            try_auto_merge(last_save_dir)
                         
-                     if AUTO_MERGE_AFTER_STREAM:
-                         # 避免在一次停播期间重复合并
-                         # 我们可以传递一个标记给 try_auto_merge 吗？不，它靠文件是否已合并来判断。
-                         # 但由于我们有 API 检查间隔，可能会频繁扫描目录。
-                         # 为了优化，可以将 try_auto_merge 放在第一次检测到 not is_live 时。
-                         # 也就是 last_save_dir 还是非 None 时。
-                         
-                         # 执行合并
-                         try_auto_merge(last_save_dir)
-                     
-                     # 无论合并成功与否，重置 last_save_dir 防止重复执行
-                     last_save_dir = None
-                 
-                 print(f"[{time.strftime('%H:%M:%S')}] 未开播，等待中...", end='\r')
+                        # 无论合并成功与否，重置 last_save_dir 防止重复执行
+                        last_save_dir = None
+                    
+                    print(f"[{time.strftime('%H:%M:%S')}] 未开播，等待中...", end='\r')
 
-            time.sleep(CHECK_INTERVAL)
+                time.sleep(CHECK_INTERVAL)
+
+            except KeyboardInterrupt:
+                # 重新抛出，以便外层捕获并正常退出
+                raise
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                log_error(f"监控循环发生意外异常: {e}", console=True)
+                time.sleep(5) # 防止死循环大量刷日志
             
     except KeyboardInterrupt:
         print("\n用户手动停止...")
@@ -476,16 +563,112 @@ def start_merge():
 
     print("\n所有任务完成。")
 
+def start_summarization():
+    log_info("进入视频总结生成模式...", color=Fore.BLUE)
+    merger = Merger()
+    
+    dirs = merger.get_recording_dirs()
+    if not dirs:
+        print(Fore.RED + f"未找到任何录制目录 ({DEFAULT_SAVE_PATH} 文件夹为空)。" + Style.RESET_ALL)
+        return
+
+    print(Fore.CYAN + "发现以下录制目录：" + Style.RESET_ALL)
+    for i, d in enumerate(dirs):
+        print(f"{i + 1}. {d}")
+    
+    print(f"a. 处理所有目录")
+    choice = input(f"请选择要处理的目录 (1-{len(dirs)}/a): ").strip()
+    
+    selected_dirs = []
+    if choice.lower() == 'a':
+        selected_dirs = dirs
+    elif choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(dirs):
+            selected_dirs = [dirs[idx]]
+        else:
+            print("无效选择")
+            return
+    else:
+        print("无效输入")
+        return
+
+    # 添加过滤选项
+    # 总结是基于视频文件去寻找同名srt和txt的
+    print(f"是否只处理合并后的视频文件 (文件名包含 '_merged')?")
+    filter_choice = input("输入 y 确认 (默认), 输入 n 处理所有视频: ").strip().lower()
+    only_merged = True if filter_choice != 'n' else False
+
+    all_tasks = []
+    if len(selected_dirs) == 1:
+        folder_name = selected_dirs[0]
+        dir_path = os.path.join(DEFAULT_SAVE_PATH, folder_name)
+        print(Fore.YELLOW + f"\n正在扫描目录: {folder_name}" + Style.RESET_ALL)
+        candidates = []
+        if os.path.isdir(dir_path):
+            for root, _, files in os.walk(dir_path):
+                for file in files:
+                    if file.lower().endswith(('.mp4', '.flv', '.mkv')):
+                        if only_merged and "_merged" not in file:
+                            continue
+                        candidates.append(os.path.join(root, file))
+        
+        if not candidates:
+            print("  未找到视频文件。")
+        else:
+            print(Fore.CYAN + f"找到以下视频文件：" + Style.RESET_ALL)
+            for i, path in enumerate(candidates):
+                rel_name = os.path.relpath(path, dir_path)
+                print(f"{i + 1}. {rel_name}")
+            print("a. 处理该目录下所有视频")
+            video_choice = input(f"请选择要生成的视频 (1-{len(candidates)}/a): ").strip().lower()
+            if video_choice == 'a':
+                all_tasks = candidates
+            elif video_choice.isdigit():
+                idx = int(video_choice) - 1
+                if 0 <= idx < len(candidates):
+                    all_tasks = [candidates[idx]]
+    else:
+        for folder_name in selected_dirs:
+            dir_path = os.path.join(DEFAULT_SAVE_PATH, folder_name)
+            if not os.path.isdir(dir_path):
+                continue
+            for root, _, files in os.walk(dir_path):
+                for file in files:
+                    if file.lower().endswith(('.mp4', '.flv', '.mkv')):
+                        if only_merged and "_merged" not in file:
+                            continue
+                        all_tasks.append(os.path.join(root, file))
+
+    if not all_tasks:
+        if len(selected_dirs) == 1: input("按回车键返回主菜单...")
+        return
+
+    print(Fore.GREEN + f"\n待处理任务数: {len(all_tasks)}" + Style.RESET_ALL)
+    summarizer = Summarizer()
+    total_processed = 0
+    for video_path in all_tasks:
+        print(f"  [处理中] 正在生成总结: {os.path.basename(video_path)}")
+        try:
+            if summarizer.summarize(video_path):
+                total_processed += 1
+        except Exception as e:
+            log_error(f"  生成失败: {e}", console=True)
+
+    print(Fore.GREEN + f"\n任务完成，共生成 {total_processed} 个总结文件。" + Style.RESET_ALL)
+    input("按回车键返回主菜单...")
+
 def main():
     print(Fore.BLUE + "=== Bilibili 直播录制助手 ===" + Style.RESET_ALL)
     print("1. 监控并录制 UP 主直播")
     print("2. 合并已录制的分段视频")
     print("3. 为已有视频生成字幕")
-    print("4. 登录 Bilibili 账号 (防反爬/获取更高画质)")
-    print("5. 系统设置 (修改配置)")
+    print("4. 为已有视频生成总结")
+    print("5. 登录 Bilibili 账号 (防反爬/获取更高画质)")
+    print("6. 系统设置 (修改配置)")
     print("q. 退出程序")
     
-    choice = input("\n请选择功能 (1/2/3/4/5/q): ").strip().lower()
+    choice = input("\n请选择功能 (1/2/3/4/5/6/q): ").strip().lower()
     
     if choice == '1':
         start_monitor()
@@ -495,10 +678,13 @@ def main():
         start_transcription()
         main()
     elif choice == '4':
+        start_summarization()
+        main()
+    elif choice == '5':
         BilibiliAPI.login()
         input("\n按回车键返回主菜单...")
         main()
-    elif choice == '5':
+    elif choice == '6':
         show_settings()
         main()
     elif choice == 'q':
@@ -632,7 +818,13 @@ def start_transcription():
         print(f"  [处理中] 正在生成字幕: {os.path.basename(video_path)}")
         try:
             if transcriber.generate_subtitle(video_path):
-                total_processed += 1
+                total_processed += 1                
+            # 手动模式下也尝试生成总结
+            if GENERATE_SUMMARY:
+                print(f"  [处理中] 正在生成总结: {os.path.basename(video_path)}")
+                summarizer = Summarizer()
+                summarizer.summarize(video_path)
+                
         except Exception as e:
             log_error(f"  生成失败: {e}")
 
@@ -640,6 +832,7 @@ def start_transcription():
     input("按回车键返回主菜单...")
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support() # 建议加上
     # 程序初始化时尝试加载 Cookies
     BilibiliAPI.load_cookies()
     main()
