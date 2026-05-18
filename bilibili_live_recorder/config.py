@@ -40,7 +40,7 @@ GENERATE_SUMMARY = True
 
 # 摘要生成使用的 API 设置 (兼容 OpenAI 格式，可填 ChatGPT, DeepSeek, Ollama, LM Studio 等)
 # 若使用本地 LLM (如 Ollama)，Base URL 通常为 "http://localhost:11434/v1"
-SUMMARY_API_KEY = "sk-YOUR_API_KEY_HERE"
+SUMMARY_API_KEY = "sk-"
 SUMMARY_API_BASE_URL = "https://api.deepseek.com" # 这是deepseek的 Base URL
 SUMMARY_MODEL = "deepseek-chat" # 或本地模型名，如 "llama3"
 

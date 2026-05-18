@@ -2,7 +2,7 @@ import os
 import subprocess
 import re
 from .config import DEFAULT_SAVE_PATH
-from colorama import Fore, Style
+from .logger import log_info, log_error
 
 class Merger:
     def __init__(self):
@@ -49,7 +49,7 @@ class Merger:
         使用 ffmpeg concat demuxer 合并文件
         """
         if not file_list:
-            print(Fore.RED + "没有文件可合并" + Style.RESET_ALL)
+            log_error("没有文件可合并", console=True)
             return False
 
         output_dir = os.path.dirname(output_file_path)
@@ -63,7 +63,7 @@ class Merger:
                     abs_path = os.path.abspath(file_path).replace("\\", "/")
                     f.write(f"file '{abs_path}'\n")
             
-            print(Fore.CYAN + f"正在合并 {len(file_list)} 个分段到 {os.path.basename(output_file_path)} ..." + Style.RESET_ALL)
+            log_info(f"正在合并 {len(file_list)} 个分段到 {os.path.basename(output_file_path)} ...", console=True)
 
             # ffmpeg command
             # -f concat -safe 0 -i list.txt -c copy output.mp4
@@ -85,11 +85,11 @@ class Merger:
             )
 
             if process.returncode == 0:
-                print(Fore.GREEN + "合并成功！" + Style.RESET_ALL)
+                log_info("合并成功！", console=True)
                 ret = True
             else:
-                print(Fore.RED + "合并失败！" + Style.RESET_ALL)
-                print(process.stderr.decode('utf-8', errors='ignore')) # 打印 ffmpeg 错误信息
+                log_error("合并失败！", console=True)
+                log_error(process.stderr.decode('utf-8', errors='ignore'), console=True)
                 ret = False
 
             # 清理 list.txt
@@ -99,5 +99,5 @@ class Merger:
             return ret
 
         except Exception as e:
-            print(Fore.RED + f"合并过程出错: {e}" + Style.RESET_ALL)
+            log_error(f"合并过程出错: {e}", console=True)
             return False

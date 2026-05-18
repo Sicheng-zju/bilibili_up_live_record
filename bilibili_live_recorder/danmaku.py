@@ -7,7 +7,7 @@ import struct
 import requests
 import websocket
 from datetime import datetime
-from .logger import log_info, log_error
+from .logger import log_info, log_error, log_warning
 
 try:
     import brotli
@@ -85,8 +85,9 @@ class DanmakuRecorder:
                 
                 log_info(f"获取弹幕服务器成功(getConf): {host}", console=False)
                 return f"wss://{host}:{wss_port}/sub", token
-        except Exception:
-            pass
+            log_warning(f"getConf 返回异常 code={data.get('code')} msg={data.get('message')}", console=False)
+        except Exception as e:
+            log_warning(f"getConf 请求失败: {e}", console=False)
 
         # 备用尝试 getDanmuInfo (新接口)
         try:
@@ -100,10 +101,9 @@ class DanmakuRecorder:
                 host = host_list[0]['host']
                 log_info(f"获取弹幕服务器成功(getDanmuInfo): {host}", console=False)
                 return f"wss://{host}:{wss_port}/sub", token
-            else:
-                pass 
+            log_warning(f"getDanmuInfo 返回异常 code={data.get('code')} msg={data.get('message')}", console=False)
         except Exception as e:
-            pass
+            log_warning(f"getDanmuInfo 请求失败: {e}", console=False)
             
         return None, None
 
@@ -118,11 +118,11 @@ class DanmakuRecorder:
             try:
                 uri, token = self._get_danmu_info()
                 if not uri:
-                    log_error("无法获取弹幕服务器地址，尝试默认配置...", console=True)
-                    uri = "wss://broadcastlv.chat.bilibili.com:2245/sub"
-                    token = ""
+                    log_warning("无法获取弹幕服务器地址，10秒后重试（不影响视频录制）", console=True)
+                    time.sleep(10)
+                    continue
                 
-                log_info(f"正在连接弹幕服务器: {uri}...", console=False)
+                log_info(f"正在连接弹幕服务器: {uri}...", console=True)
                 
                 # Setup WebSocket
                 self.ws = websocket.WebSocketApp(
@@ -134,14 +134,14 @@ class DanmakuRecorder:
                     on_close=self._on_close
                 )
                 
-                # Run forever blocks until connection closes
-                self.ws.run_forever(ping_interval=30, ping_timeout=10)
+                # 关闭 websocket 层 ping/pong 检查，改用弹幕协议心跳，避免网络抖动下频繁误判超时
+                self.ws.run_forever(ping_interval=0)
                 
                 if self.stop_event.is_set():
                     break
                 
                 # Retry logic
-                log_info("弹幕连接断开，5秒后重试...", console=False)
+                log_warning("弹幕连接断开，5秒后重试...", console=True)
                 time.sleep(5)
                 
             except Exception as e:
@@ -153,7 +153,7 @@ class DanmakuRecorder:
         ws.send(header + body)
 
     def _on_open(self, ws, token):
-        log_info("WebSocket连接建立，发送认证包...", console=False)
+        log_info("WebSocket连接建立，发送认证包...", console=True)
         auth_data = {
             "uid": 0,
             "roomid": self.room_id,
@@ -212,7 +212,7 @@ class DanmakuRecorder:
                         self._handle_cmd(text)
                 
                 elif operation == OP_CONNECT_SUCCESS:
-                    log_info("弹幕服务器认证成功 (Op 8)", console=False)
+                    log_info("弹幕服务器认证成功 (Op 8)", console=True)
                 
                 offset += packet_len
                 
@@ -246,7 +246,7 @@ class DanmakuRecorder:
             pass
 
     def _on_error(self, ws, error):
-        pass
+        log_warning(f"弹幕 WebSocket 错误: {error}", console=False)
 
     def _on_close(self, ws, close_status_code, close_msg):
-        pass
+        log_warning(f"弹幕 WebSocket 关闭: code={close_status_code}, msg={close_msg}", console=False)

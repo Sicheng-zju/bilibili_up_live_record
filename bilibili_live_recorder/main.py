@@ -3,6 +3,7 @@
 import sys
 import time
 import os
+import json
 import signal
 import threading
 import multiprocessing
@@ -28,9 +29,108 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
+
+def _get_history_file_path():
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    logs_dir = os.path.join(base_dir, 'logs')
+    os.makedirs(logs_dir, exist_ok=True)
+    return os.path.join(logs_dir, 'up_history.json')
+
+
+def load_up_history():
+    history_file = _get_history_file_path()
+    if not os.path.exists(history_file):
+        return []
+
+    try:
+        with open(history_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+
+        clean_history = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            uid = str(item.get('uid', '')).strip()
+            if not uid:
+                continue
+            clean_history.append({
+                'uid': uid,
+                'name': str(item.get('name', '')).strip(),
+                'room_id': str(item.get('room_id', '')).strip(),
+                'last_used': str(item.get('last_used', '')).strip()
+            })
+        return clean_history
+    except Exception as e:
+        log_warning(f"读取 UP 历史记录失败: {e}", console=False)
+        return []
+
+
+def save_up_history(history):
+    history_file = _get_history_file_path()
+    try:
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        log_error(f"保存 UP 历史记录失败: {e}", console=True)
+        return False
+
+
+def add_up_to_history(uid, up_info):
+    uid = str(uid).strip()
+    if not uid:
+        return
+
+    history = load_up_history()
+    history = [item for item in history if item.get('uid') != uid]
+
+    history.insert(0, {
+        'uid': uid,
+        'name': str(up_info.get('name', '')).strip(),
+        'room_id': str(up_info.get('room_id', '')).strip(),
+        'last_used': time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+    # 只保留最近 20 条
+    save_up_history(history[:20])
+
+
+def choose_uid_from_history():
+    history = load_up_history()
+    if not history:
+        return None
+
+    print(Fore.YELLOW + "\n历史录制 UP 主：" + Style.RESET_ALL)
+    for idx, item in enumerate(history, start=1):
+        name = item.get('name') or '未知UP'
+        uid = item.get('uid', '-')
+        room_id = item.get('room_id', '-')
+        last_used = item.get('last_used') or '-'
+        print(f"{idx}. {name} | UID: {uid} | RoomID: {room_id} | 最近使用: {last_used}")
+
+    while True:
+        choice = input(Fore.CYAN + "输入序号直接选择，回车手动输入，q退出: " + Style.RESET_ALL).strip().lower()
+        if not choice:
+            return None
+        if choice == 'q':
+            sys.exit(0)
+        if choice.isdigit():
+            pos = int(choice)
+            if 1 <= pos <= len(history):
+                selected = history[pos - 1]
+                print(Fore.GREEN + f"已选择历史UP: {selected.get('name', '未知UP')} (UID: {selected.get('uid')})" + Style.RESET_ALL)
+                return selected.get('uid')
+        print(Fore.RED + "无效序号，请重试。" + Style.RESET_ALL)
+
 def get_input_uid():
     """获取用户输入的有效 UID 或 URL"""
     while True:
+        history_uid = choose_uid_from_history()
+        if history_uid:
+            return history_uid
+
         user_input = input(Fore.CYAN + "请输入 Bilibili UP 主的个人主页 URL 或 UID (输入 q 退出): " + Style.RESET_ALL).strip()
         if not user_input:
             continue
@@ -72,10 +172,10 @@ def _merge_and_clean(merger, dir_path, base_name, file_list):
     output_file = os.path.join(dir_path, f"{base_name}_merged.mp4")
     
     if os.path.exists(output_file):
-         print(Fore.YELLOW + f"  跳过: {base_name} (已存在合并文件)" + Style.RESET_ALL)
-         return False
-         
-    print(f"  正在处理: {base_name} ...")
+        log_warning(f"跳过: {base_name} (已存在合并文件)", console=True)
+        return False
+
+    log_info(f"正在处理: {base_name} ...", console=True)
     try:
         success = merger.merge_segments(output_file, file_list)
     except Exception as e:
@@ -84,16 +184,16 @@ def _merge_and_clean(merger, dir_path, base_name, file_list):
     
     if success:
         if DELETE_SEGMENTS_AFTER_MERGE:
-            print(Fore.CYAN + f"  合并成功，正在清理 {len(file_list)} 个分段文件..." + Style.RESET_ALL)
+            log_info(f"合并成功，正在清理 {len(file_list)} 个分段文件...", console=True)
             for f_path in file_list:
                 try:
                     os.remove(f_path)
                 except Exception as e:
-                    log_error(f"  删除文件失败: {f_path} ({e})", console=True)
+                    log_error(f"删除文件失败: {f_path} ({e})", console=True)
                     
         # 尝试生成字幕
         if GENERATE_SUBTITLES:
-            print(Fore.CYAN + f"  [字幕] 准备生成字幕..." + Style.RESET_ALL)
+            log_info("[字幕] 准备生成字幕...", console=True)
             try:
                 # 使用独立子进程运行转写，防止 whisper 模型释放时的 Segmentation Fault 导致整个脚本崩溃
                 # 注意：父进程 (try_auto_merge 启动的那个) 必须 daemon=False 才能在此处再开子进程
@@ -108,14 +208,14 @@ def _merge_and_clean(merger, dir_path, base_name, file_list):
         
         # 尝试生成总结
         if GENERATE_SUMMARY:
-            print(Fore.CYAN + f"  [总结] 准备生成总结..." + Style.RESET_ALL)
+            log_info("[总结] 准备生成总结...", console=True)
             try:
                 summarizer = Summarizer()
                 summarizer.summarize(output_file)
             except Exception as e:
                 log_error(f"直播总结生成异常: {e}", console=True)
         else:
-            print(Fore.YELLOW + "  [总结] 自动总结未开启 (GENERATE_SUMMARY=False)" + Style.RESET_ALL)
+            log_warning("[总结] 自动总结未开启 (GENERATE_SUMMARY=False)", console=True)
                 
     return success
 
@@ -221,13 +321,15 @@ def show_settings():
         
         # 重新导入以获取最新值是不太可能的（reload tricky），所以我们只提示。
         print(f"当前运行配置 (修改后需重启生效):")
+        print(f"\n{Fore.YELLOW}【基础设置】{Style.RESET_ALL}")
         print(f"1. 检查间隔 [CHECK_INTERVAL]: {Fore.CYAN}{CHECK_INTERVAL} 秒{Style.RESET_ALL}")
         print(f"2. 分段时长 [SEGMENT_TIME]: {Fore.CYAN}{SEGMENT_TIME} 秒{Style.RESET_ALL}")
         print(f"3. 自动合并 [AUTO_MERGE]: {Fore.CYAN}{'开启' if AUTO_MERGE_AFTER_STREAM else '关闭'}{Style.RESET_ALL}")
         print(f"4. 合并后删除 [DELETE_AFTER_MERGE]: {Fore.CYAN}{'开启' if DELETE_SEGMENTS_AFTER_MERGE else '关闭'}{Style.RESET_ALL}")
         print(f"5. 录制弹幕 [RECORD_DANMAKU]: {Fore.CYAN}{'开启' if RECORD_DANMAKU else '关闭'}{Style.RESET_ALL}")
+        
+        print(f"\n{Fore.YELLOW}【字幕配置】{Style.RESET_ALL}")
         print(f"6. 自动生成字幕 [GENERATE_SUBTITLES]: {Fore.CYAN}{'开启' if GENERATE_SUBTITLES else '关闭'}{Style.RESET_ALL}")
-        print(f"12. 自动生成总结 [GENERATE_SUMMARY]: {Fore.CYAN}{'开启' if GENERATE_SUMMARY else '关闭'}{Style.RESET_ALL}")
         
         method_str = "OpenAI API" if SUBTITLE_METHOD == "openai_api" else "本地 Faster-Whisper"
         print(f"7. 字幕生成方式 [SUBTITLE_METHOD]: {Fore.CYAN}{method_str}{Style.RESET_ALL}")
@@ -243,11 +345,13 @@ def show_settings():
         print(f"10. OpenAI Model: {Fore.CYAN}{OPENAI_MODEL}{Style.RESET_ALL}")
         print(f"11. 本地 Whisper 模型: {Fore.CYAN}{LOCAL_WHISPER_MODEL}{Style.RESET_ALL}")
         
+        print(f"\n{Fore.YELLOW}【总结配置】{Style.RESET_ALL}")
+        print(f"12. 自动生成总结 [GENERATE_SUMMARY]: {Fore.CYAN}{'开启' if GENERATE_SUMMARY else '关闭'}{Style.RESET_ALL}")
         print(f"13. 总结 API Key (若空则复用OpenAI Key): {Fore.CYAN}{'已设置' if SUMMARY_API_KEY else '未设置'}{Style.RESET_ALL}")
         print(f"14. 总结 Base URL: {Fore.CYAN}{SUMMARY_API_BASE_URL}{Style.RESET_ALL}")
         print(f"15. 总结模型 (LLM): {Fore.CYAN}{SUMMARY_MODEL}{Style.RESET_ALL}")
 
-        print("b. 返回主菜单")
+        print("\nb. 返回主菜单")
         
         choice = input("\n请输入选项修改设置 (1-15/b): ").strip().lower()
         
@@ -381,6 +485,7 @@ def start_monitor():
             continue
             
         print_up_info(up_info)
+        add_up_to_history(uid, up_info)
         break
     
     room_id = up_info['room_id']
@@ -404,13 +509,22 @@ def start_monitor():
                 if recording:
                     last_save_dir = recorder.save_dir
                     if recorder.is_recording():
-                        # 录制正常进行中...
-                        # 可以在这里打印心跳，或者什么都不做
-                        time.sleep(CHECK_INTERVAL)
+                        healthy, health_reason = recorder.get_health_status(idle_timeout=max(CHECK_INTERVAL * 2, 60))
+                        if healthy:
+                            time.sleep(CHECK_INTERVAL)
+                            continue
+
+                        log_warning(f"录制健康检查失败: {health_reason}，准备自动重连...", console=True)
+                        recorder.stop_recording()
+                        recording = False
+
+                        if danmaku_recorder:
+                            danmaku_recorder.stop()
+                            danmaku_recorder = None
                         continue
                     else:
                         # 录制进程退出了
-                        print(Fore.YELLOW + f"\n[{time.strftime('%H:%M:%S')}] 录制进程已退出，正在尝试重新连接..." + Style.RESET_ALL)
+                        log_warning("录制进程已退出，正在尝试重新连接...", console=True)
                         recording = False
                         
                         if danmaku_recorder:
@@ -483,7 +597,7 @@ def start_monitor():
                         # 无论合并成功与否，重置 last_save_dir 防止重复执行
                         last_save_dir = None
                     
-                    print(f"[{time.strftime('%H:%M:%S')}] 未开播，等待中...", end='\r')
+                    log_info("未开播，等待中...", console=False)
 
                 time.sleep(CHECK_INTERVAL)
 
